@@ -1161,56 +1161,40 @@ func generateBillingHeader(payload []byte) string {
 	return fmt.Sprintf("x-anthropic-billing-header: cc_version=2.1.63.%s; cc_entrypoint=cli; cch=%s;", buildHash, cch)
 }
 
-// checkSystemInstructionsWithMode injects Claude Code-style system blocks:
-//
-//	system[0]: billing header (no cache_control)
-//	system[1]: agent identifier (no cache_control)
-//	system[2..]: user system messages (cache_control added when missing)
+// checkSystemInstructionsWithMode injects Claude Code system prompt blocks.
+// In strict mode, it replaces all user system messages with Claude Code prompts only.
+// In non-strict mode (default), it enforces Claude Code system prompt prefix, then keeps
+// user-provided text system messages in their original order.
 func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
 	system := gjson.GetBytes(payload, "system")
-
-	billingText := generateBillingHeader(payload)
-	billingBlock := fmt.Sprintf(`{"type":"text","text":"%s"}`, billingText)
-	// No cache_control on the agent block. It is a cloaking artifact with zero cache
-	// value (the last system block is what actually triggers caching of all system content).
-	// Including any cache_control here creates an intra-system TTL ordering violation
-	// when the client's system blocks use ttl='1h' (prompt-caching-scope-2026-01-05 beta
-	// forbids 1h blocks after 5m blocks, and a no-TTL block defaults to 5m).
-	agentBlock := `{"type":"text","text":"You are a Claude agent, built on Anthropic's Claude Agent SDK."}`
+	const claudeCodePrimaryPrompt = "You are Claude Code, Anthropic's official CLI for Claude."
+	const claudeCodeSentinelPrompt = "."
+	claudeCodeInstructions := `[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."},{"type":"text","text":"."}]`
 
 	if strictMode {
-		// Strict mode: billing header + agent identifier only
-		result := "[" + billingBlock + "," + agentBlock + "]"
-		payload, _ = sjson.SetRawBytes(payload, "system", []byte(result))
+		// Strict mode: replace all user system messages with Claude Code prompts only.
+		payload, _ = sjson.SetRawBytes(payload, "system", []byte(claudeCodeInstructions))
 		return payload
 	}
 
-	// Non-strict mode: billing header + agent identifier + user system messages
-	// Skip if already injected
-	firstText := gjson.GetBytes(payload, "system.0.text").String()
-	if strings.HasPrefix(firstText, "x-anthropic-billing-header:") {
-		return payload
-	}
-
-	result := "[" + billingBlock + "," + agentBlock
+	// Non-strict mode (default): enforce Claude Code system prompt prefix, then keep
+	// user-provided text system messages in their original order.
 	if system.IsArray() {
 		system.ForEach(func(_, part gjson.Result) bool {
-			if part.Get("type").String() == "text" {
-				// Add cache_control to user system messages if not present.
-				// Do NOT add ttl — let it inherit the default (5m) to avoid
-				// TTL ordering violations with the prompt-caching-scope-2026-01-05 beta.
-				partJSON := part.Raw
-				if !part.Get("cache_control").Exists() {
-					partJSON, _ = sjson.Set(partJSON, "cache_control.type", "ephemeral")
-				}
-				result += "," + partJSON
+			if part.Get("type").String() != "text" {
+				return true
 			}
+			text := part.Get("text").String()
+			if text == claudeCodePrimaryPrompt || text == claudeCodeSentinelPrompt {
+				return true
+			}
+			claudeCodeInstructions, _ = sjson.SetRaw(claudeCodeInstructions, "-1", part.Raw)
 			return true
 		})
+		payload, _ = sjson.SetRawBytes(payload, "system", []byte(claudeCodeInstructions))
+	} else {
+		payload, _ = sjson.SetRawBytes(payload, "system", []byte(claudeCodeInstructions))
 	}
-	result += "]"
-
-	payload, _ = sjson.SetRawBytes(payload, "system", []byte(result))
 	return payload
 }
 

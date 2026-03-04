@@ -322,6 +322,36 @@ func TestClaudeExecutor_GeneratesNewUserIDByDefault(t *testing.T) {
 	}
 }
 
+func TestCheckSystemInstructionsWithMode_AddsClaudeCodeSentinelPrompt(t *testing.T) {
+	input := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}`)
+	out := checkSystemInstructionsWithMode(input, false)
+
+	if got := gjson.GetBytes(out, "system.0.text").String(); got != "You are Claude Code, Anthropic's official CLI for Claude." {
+		t.Fatalf("system.0.text = %q, want Claude Code prompt", got)
+	}
+	if got := gjson.GetBytes(out, "system.1.text").String(); got != "." {
+		t.Fatalf("system.1.text = %q, want %q", got, ".")
+	}
+}
+
+func TestCheckSystemInstructionsWithMode_PreservesUserSystemAfterPrefix(t *testing.T) {
+	input := []byte(`{"system":[{"type":"text","text":"custom-a"},{"type":"text","text":"custom-b"}]}`)
+	out := checkSystemInstructionsWithMode(input, false)
+
+	if got := gjson.GetBytes(out, "system.0.text").String(); got != "You are Claude Code, Anthropic's official CLI for Claude." {
+		t.Fatalf("system.0.text = %q, want Claude Code prompt", got)
+	}
+	if got := gjson.GetBytes(out, "system.1.text").String(); got != "." {
+		t.Fatalf("system.1.text = %q, want %q", got, ".")
+	}
+	if got := gjson.GetBytes(out, "system.2.text").String(); got != "custom-a" {
+		t.Fatalf("system.2.text = %q, want %q", got, "custom-a")
+	}
+	if got := gjson.GetBytes(out, "system.3.text").String(); got != "custom-b" {
+		t.Fatalf("system.3.text = %q, want %q", got, "custom-b")
+	}
+}
+
 func TestStripClaudeToolPrefixFromResponse_NestedToolReference(t *testing.T) {
 	input := []byte(`{"content":[{"type":"tool_result","tool_use_id":"toolu_123","content":[{"type":"tool_reference","tool_name":"proxy_mcp__nia__manage_resource"}]}]}`)
 	out := stripClaudeToolPrefixFromResponse(input, "proxy_")

@@ -1314,12 +1314,12 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 					shouldSuspendModel = true
 					setModelQuota = true
 				case 408, 500, 502, 503, 504:
-					if quotaCooldownDisabledForAuth(auth) {
-						state.NextRetryAfter = time.Time{}
-					} else {
-						next := now.Add(1 * time.Minute)
-						state.NextRetryAfter = next
-					}
+					// Keep transient upstream failures observable on state/status,
+					// but do not block model selection with a cooldown window.
+					// Some OpenAI-compatible upstreams report temporary model load
+					// conditions as HTTP 5xx; cooling here causes false
+					// auth_unavailable responses on immediate retries.
+					state.NextRetryAfter = time.Time{}
 				default:
 					state.NextRetryAfter = time.Time{}
 				}
