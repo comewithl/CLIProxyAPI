@@ -452,6 +452,64 @@ func TestParseCodexWebsocketErrorPreservesWrappedBodyAndHeaders(t *testing.T) {
 	}
 }
 
+func TestCodexWebsocketsExecuteStreamSurfacesTerminalStreamError(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		if _, _, errRead := conn.ReadMessage(); errRead != nil {
+			t.Errorf("read upstream websocket message: %v", errRead)
+			return
+		}
+		failed := []byte(`{"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"context_length_exceeded","message":"Your input exceeds the context window of this model. Please adjust your input and try again."}}}`)
+		if errWrite := conn.WriteMessage(websocket.TextMessage, failed); errWrite != nil {
+			t.Errorf("write failed websocket message: %v", errWrite)
+			return
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	executor := NewCodexWebsocketsExecutor(&config.Config{SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll}})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url": server.URL,
+		"api_key":  "test",
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, err := executor.ExecuteStream(ctx, auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.5",
+		Payload: []byte(`{"model":"gpt-5.5","input":"hello"}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FromString("codex"),
+		Stream:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+
+	var streamErr error
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			streamErr = chunk.Err
+			break
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("missing stream terminal error")
+	}
+	if got := statusCodeFromTestError(t, streamErr); got != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d; err=%v", got, http.StatusBadRequest, streamErr)
+	}
+	assertCodexErrorCode(t, streamErr.Error(), "invalid_request_error", "context_too_large")
+}
+
 func TestApplyCodexHeadersUsesConfigUserAgentForOAuth(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
 	if err != nil {

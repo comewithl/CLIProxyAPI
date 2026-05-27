@@ -357,6 +357,14 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}
 		helps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)
 
+		if streamErr, ok := codexTerminalStreamContextLengthErr(payload); ok {
+			if sess != nil {
+				e.invalidateUpstreamConn(sess, conn, "terminal_stream_error", streamErr)
+			}
+			helps.RecordAPIWebsocketError(ctx, e.cfg, "terminal_stream_error", streamErr)
+			return resp, streamErr
+		}
+
 		if wsErr, ok := parseCodexWebsocketError(payload); ok {
 			if sess != nil {
 				e.invalidateUpstreamConn(sess, conn, "upstream_error", wsErr)
@@ -605,6 +613,18 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 				continue
 			}
 			helps.AppendAPIWebsocketResponse(ctx, e.cfg, payload)
+
+			if streamErr, ok := codexTerminalStreamContextLengthErr(payload); ok {
+				terminateReason = "terminal_stream_error"
+				terminateErr = streamErr
+				helps.RecordAPIWebsocketError(ctx, e.cfg, "terminal_stream_error", streamErr)
+				reporter.PublishFailure(ctx, streamErr)
+				if sess != nil {
+					e.invalidateUpstreamConn(sess, conn, "terminal_stream_error", streamErr)
+				}
+				_ = send(cliproxyexecutor.StreamChunk{Err: streamErr})
+				return
+			}
 
 			if wsErr, ok := parseCodexWebsocketError(payload); ok {
 				terminateReason = "upstream_error"
