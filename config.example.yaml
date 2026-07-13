@@ -423,6 +423,40 @@ nonstream-keepalive-interval: 0
 #   xai:
 #     - "grok-3-mini"
 
+# Optional local headroom control before upstream requests. This is a Go-native,
+# heuristic trimmer/compressor for text chat payloads; it is disabled by default.
+# Supported strategies: drop-oldest, compress, compress-then-drop.
+# Compression is local and heuristic; it is not the full Headroom ML/CCR pipeline.
+# headroom:
+#   enabled: false
+#   strategy: drop-oldest
+#   max-input-tokens: 0 # 0 disables global headroom unless a matching rule sets a budget.
+#   reserve-output-tokens: 0
+#   min-recent-messages: 2
+#   compression-mode: auto # auto, conservative, aggressive
+#   min-compression-tokens: 0
+#   target-compression-ratio: 0.65
+#   preserve-code-blocks: false
+#   preserve-json: false
+#   stable-output: true
+#   max-compression-passes: 1
+#   rules:
+#     - models:
+#         - name: "claude-*"
+#           protocol: "claude"
+#       strategy: compress-then-drop
+#       max-input-tokens: 180000
+#       reserve-output-tokens: 8192
+#       min-recent-messages: 4
+#       compression-mode: conservative
+#     - models:
+#         - name: "gpt-*"
+#           protocol: "openai"
+#       strategy: compress
+#       max-input-tokens: 120000
+#       reserve-output-tokens: 4096
+#       compression-mode: aggressive
+#
 # Optional payload configuration
 # payload:
 #   default: # Default rules only set parameters when they are missing in the payload.

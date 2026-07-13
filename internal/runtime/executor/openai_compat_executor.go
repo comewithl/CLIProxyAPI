@@ -127,6 +127,8 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 			translated = updated
 		}
 		translated = sanitizeOpenAIResponsesReasoningEncryptedContent(ctx, "openai compat executor", translated)
+	} else {
+		translated = helps.ApplyHeadroomConfigWithRequest(ctx, e.cfg, baseModel, to.String(), from.String(), translated, requestedModel, requestPath, opts.Headers)
 	}
 	reporter.SetTranslatedReasoningEffort(translated, to.String())
 
@@ -323,6 +325,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
 	requestPath := helps.PayloadRequestPath(opts)
 	translated = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", translated, originalTranslated, requestedModel, requestPath, opts.Headers)
+	translated = helps.ApplyHeadroomConfigWithRequest(ctx, e.cfg, baseModel, to.String(), from.String(), translated, requestedModel, requestPath, opts.Headers)
 
 	// Request usage data in the final streaming chunk so that token statistics
 	// are captured even when the upstream is an OpenAI-compatible provider.

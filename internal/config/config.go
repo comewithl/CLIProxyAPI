@@ -164,6 +164,11 @@ type Config struct {
 
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
+
+	// Headroom defines optional request message trimming before upstream calls.
+	Headroom HeadroomConfig `yaml:"headroom" json:"headroom"`
+
+	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
 // PluginsConfig holds dynamic plugin system settings.
@@ -407,6 +412,39 @@ type PayloadModelRule struct {
 	Exist []string `yaml:"exist" json:"exist"`
 	// NotExist requires payload JSON paths to be missing or null.
 	NotExist []string `yaml:"not-exist" json:"not-exist"`
+}
+
+// HeadroomConfig configures optional provider request message trimming.
+type HeadroomConfig struct {
+	Enabled                bool           `yaml:"enabled" json:"enabled"`
+	Strategy               string         `yaml:"strategy" json:"strategy"`
+	MaxInputTokens         int            `yaml:"max-input-tokens" json:"max-input-tokens"`
+	ReserveOutputTokens    int            `yaml:"reserve-output-tokens" json:"reserve-output-tokens"`
+	MinRecentMessages      int            `yaml:"min-recent-messages" json:"min-recent-messages"`
+	CompressionMode        string         `yaml:"compression-mode" json:"compression-mode"`
+	MinCompressionTokens   int            `yaml:"min-compression-tokens" json:"min-compression-tokens"`
+	TargetCompressionRatio float64        `yaml:"target-compression-ratio" json:"target-compression-ratio"`
+	PreserveCodeBlocks     bool           `yaml:"preserve-code-blocks" json:"preserve-code-blocks"`
+	PreserveJSON           bool           `yaml:"preserve-json" json:"preserve-json"`
+	StableOutput           bool           `yaml:"stable-output" json:"stable-output"`
+	MaxCompressionPasses   int            `yaml:"max-compression-passes" json:"max-compression-passes"`
+	Rules                  []HeadroomRule `yaml:"rules" json:"rules"`
+}
+
+// HeadroomRule configures message trimming for matching model requests.
+type HeadroomRule struct {
+	Models                 []PayloadModelRule `yaml:"models" json:"models"`
+	Strategy               string             `yaml:"strategy" json:"strategy"`
+	MaxInputTokens         int                `yaml:"max-input-tokens" json:"max-input-tokens"`
+	ReserveOutputTokens    int                `yaml:"reserve-output-tokens" json:"reserve-output-tokens"`
+	MinRecentMessages      int                `yaml:"min-recent-messages" json:"min-recent-messages"`
+	CompressionMode        string             `yaml:"compression-mode" json:"compression-mode"`
+	MinCompressionTokens   int                `yaml:"min-compression-tokens" json:"min-compression-tokens"`
+	TargetCompressionRatio float64            `yaml:"target-compression-ratio" json:"target-compression-ratio"`
+	PreserveCodeBlocks     bool               `yaml:"preserve-code-blocks" json:"preserve-code-blocks"`
+	PreserveJSON           bool               `yaml:"preserve-json" json:"preserve-json"`
+	StableOutput           bool               `yaml:"stable-output" json:"stable-output"`
+	MaxCompressionPasses   int                `yaml:"max-compression-passes" json:"max-compression-passes"`
 }
 
 // CloakConfig configures request cloaking for non-Claude-Code clients.
@@ -808,7 +846,6 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Return the populated configuration struct.
 	return &cfg, nil
-}
 
 // NormalizePluginsConfig applies default plugin configuration values.
 func (cfg *Config) NormalizePluginsConfig() {
@@ -843,6 +880,75 @@ func (cfg *Config) SanitizePayloadRules() {
 	}
 	cfg.Payload.DefaultRaw = sanitizePayloadRawRules(cfg.Payload.DefaultRaw, "default-raw")
 	cfg.Payload.OverrideRaw = sanitizePayloadRawRules(cfg.Payload.OverrideRaw, "override-raw")
+}
+
+func (cfg *Config) SanitizeHeadroomConfig() {
+	if cfg == nil {
+		return
+	}
+	cfg.Headroom.Strategy = strings.TrimSpace(cfg.Headroom.Strategy)
+	if cfg.Headroom.Strategy == "" {
+		cfg.Headroom.Strategy = "drop-oldest"
+	}
+	if cfg.Headroom.MaxInputTokens < 0 {
+		cfg.Headroom.MaxInputTokens = 0
+	}
+	if cfg.Headroom.ReserveOutputTokens < 0 {
+		cfg.Headroom.ReserveOutputTokens = 0
+	}
+	if cfg.Headroom.MinRecentMessages < 0 {
+		cfg.Headroom.MinRecentMessages = 0
+	} else if cfg.Headroom.MinRecentMessages == 0 {
+		cfg.Headroom.MinRecentMessages = 2
+	}
+	cfg.Headroom.CompressionMode = sanitizeHeadroomCompressionMode(cfg.Headroom.CompressionMode)
+	if cfg.Headroom.MinCompressionTokens < 0 {
+		cfg.Headroom.MinCompressionTokens = 0
+	}
+	if cfg.Headroom.TargetCompressionRatio <= 0 || cfg.Headroom.TargetCompressionRatio >= 1 {
+		cfg.Headroom.TargetCompressionRatio = 0
+	}
+	if cfg.Headroom.MaxCompressionPasses < 0 {
+		cfg.Headroom.MaxCompressionPasses = 0
+	}
+	for i := range cfg.Headroom.Rules {
+		rule := &cfg.Headroom.Rules[i]
+		rule.Strategy = strings.TrimSpace(rule.Strategy)
+		if rule.Strategy == "" {
+			rule.Strategy = cfg.Headroom.Strategy
+		}
+		if rule.MaxInputTokens < 0 {
+			rule.MaxInputTokens = 0
+		}
+		if rule.ReserveOutputTokens < 0 {
+			rule.ReserveOutputTokens = 0
+		}
+		if rule.MinRecentMessages < 0 {
+			rule.MinRecentMessages = 0
+		}
+		rule.CompressionMode = sanitizeHeadroomCompressionMode(rule.CompressionMode)
+		if rule.CompressionMode == "" {
+			rule.CompressionMode = cfg.Headroom.CompressionMode
+		}
+		if rule.MinCompressionTokens < 0 {
+			rule.MinCompressionTokens = 0
+		}
+		if rule.TargetCompressionRatio < 0 || rule.TargetCompressionRatio >= 1 {
+			rule.TargetCompressionRatio = 0
+		}
+		if rule.MaxCompressionPasses < 0 {
+			rule.MaxCompressionPasses = 0
+		}
+	}
+}
+
+func sanitizeHeadroomCompressionMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "auto", "conservative", "aggressive":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "auto"
+	}
 }
 
 func sanitizePayloadRawRules(rules []PayloadRule, section string) []PayloadRule {
